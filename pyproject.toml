@@ -6,8 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "scope-daydream",
-    "flask",
-    "flask-cors",
 ]
 
 [project.entry-points."scope.pipelines"]

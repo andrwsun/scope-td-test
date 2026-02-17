@@ -1,12 +1,75 @@
 import torch
 import threading
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 from scope.core.pipelines.base_pipeline import BasePipeline
 from .schema import TDTestConfig
+
+
+class TDRequestHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for TouchDesigner communication."""
+
+    def do_POST(self):
+        """Handle POST requests."""
+        if self.path == '/message':
+            try:
+                # Read request body
+                content_length = int(self.headers['Content-Length'])
+                body = self.rfile.read(content_length)
+                data = json.loads(body.decode('utf-8'))
+
+                message = data.get('message', 'No message')
+
+                # Update pipeline's current message
+                self.server.pipeline.current_message = message
+
+                # Print to Scope console
+                print(f"✅ RECEIVED FROM TOUCHDESIGNER: {message}")
+
+                # Send response
+                response = json.dumps({
+                    'status': 'success',
+                    'received': message
+                })
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(response.encode('utf-8'))
+
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                error_response = json.dumps({'status': 'error', 'message': str(e)})
+                self.wfile.write(error_response.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_GET(self):
+        """Handle GET requests."""
+        if self.path == '/ping':
+            response = json.dumps({
+                'status': 'alive',
+                'current_message': self.server.pipeline.current_message
+            })
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(response.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        """Suppress default logging."""
+        pass
 
 
 class TDTestPipeline(BasePipeline):
@@ -22,47 +85,16 @@ class TDTestPipeline(BasePipeline):
         self.current_message = config.message
 
         # Start HTTP server in background thread
+        self.http_server = None
         self.server_thread = None
         self.start_http_server()
 
     def start_http_server(self):
-        """Start Flask HTTP server in background thread."""
-        app = Flask(__name__)
-        CORS(app)  # Allow requests from anywhere
-
-        @app.route('/message', methods=['POST'])
-        def receive_message():
-            """Receive message from TouchDesigner."""
-            try:
-                data = request.get_json()
-                message = data.get('message', 'No message')
-
-                # Update current message
-                self.current_message = message
-
-                # Print to Scope console so you can see it worked!
-                print(f"✅ RECEIVED FROM TOUCHDESIGNER: {message}")
-
-                return jsonify({
-                    'status': 'success',
-                    'received': message
-                }), 200
-
-            except Exception as e:
-                print(f"❌ Error receiving message: {e}")
-                return jsonify({'status': 'error', 'message': str(e)}), 400
-
-        @app.route('/ping', methods=['GET'])
-        def ping():
-            """Simple ping endpoint to test if server is running."""
-            return jsonify({
-                'status': 'alive',
-                'current_message': self.current_message
-            }), 200
-
-        # Run server in background thread
+        """Start HTTP server in background thread using built-in http.server."""
         def run_server():
-            app.run(host='0.0.0.0', port=self.config.http_port, debug=False, use_reloader=False)
+            self.http_server = HTTPServer(('0.0.0.0', self.config.http_port), TDRequestHandler)
+            self.http_server.pipeline = self  # Pass pipeline instance to handler
+            self.http_server.serve_forever()
 
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
