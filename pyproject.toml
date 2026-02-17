@@ -1,0 +1,14 @@
+[project]
+name = "scope-td-test"
+version = "0.1.0"
+description = "Minimal test plugin for TouchDesigner → Scope communication"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "scope-daydream",
+    "flask",
+    "flask-cors",
+]
+
+[project.entry-points."scope.pipelines"]
+td-test = "scope_td_test:TDTestConfig"
